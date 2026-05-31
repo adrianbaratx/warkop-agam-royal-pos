@@ -3,7 +3,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     match /orders/{orderId} {
       // KHUSUS TESTING / DEVELOPMENT.
-      // Jangan gunakan aturan ini untuk produksi karena semua orang bisa baca/tulis.
+      // Jangan pakai rules ini untuk produksi.
       allow read, write: if true;
     }
   }

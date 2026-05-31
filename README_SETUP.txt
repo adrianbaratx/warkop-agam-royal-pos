@@ -1,46 +1,43 @@
-SISTEM KASIR WARKOP AGAM ROYAL
-================================
+WARKOP AGAM ROYAL POS - FINAL
+==============================
 
-Fitur:
+FITUR
+-----
 1. Dashboard kasir.
-2. QR untuk 30 meja.
-3. Konsumen scan QR lalu masuk halaman order.
-4. Konsumen pilih menu dan kirim pesanan.
-5. Pesanan masuk ke kasir.
-6. Kasir ubah status pesanan, bayar, dan print struk.
-7. Mendukung mode demo lokal dan mode Firebase realtime.
+2. QR self-order untuk 30 meja.
+3. Konsumen scan QR lalu pilih menu.
+4. Pesanan masuk ke kasir.
+5. Kasir bisa ubah status:
+   - Pesanan Baru
+   - Diproses
+   - Siap Diantar
+   - Selesai
+6. Metode pembayaran:
+   - Cash
+   - QRIS
+   - Transfer
+   - E-Wallet
+7. Print struk.
+8. Mode demo lokal.
+9. Siap disambungkan ke Firebase untuk realtime HP konsumen -> laptop kasir.
 
-CARA PASANG DI PROYEK YANG SUDAH ADA
-====================================
+CARA MENJALANKAN
+----------------
+1. Extract ZIP.
+2. Buka terminal di folder hasil extract:
+   warkop-royal-pos-final
 
-1. Buka folder:
-   D:\warkop_agam_royal\warkop-royal-pos
+3. Jalankan:
+   npm install
 
-2. Install package tambahan:
-   npm install firebase react-qr-code
-
-3. Kalau Tailwind belum aktif, jalankan:
-   npm install -D tailwindcss@3 postcss autoprefixer
-   npx tailwindcss init
-
-4. Copy file:
-   - src/App.js
-   - src/CustomerOrder.jsx
-   - src/KasirDashboard.jsx
-   - src/MenuData.js
-   - src/firebase.js
-   - src/index.css
-   - src/index.js
-   - tailwind.config.js
-
-   ke proyek kamu. Kalau diminta replace, pilih replace.
-
-5. Jalankan:
+4. Jalankan:
    npm start
 
-HALAMAN
-=======
+5. Buka:
+   http://localhost:3000
 
+HALAMAN
+-------
 Dashboard kasir:
 http://localhost:3000
 
@@ -50,42 +47,41 @@ http://localhost:3000/order?table=1
 Halaman konsumen meja 2:
 http://localhost:3000/order?table=2
 
-PENTING UNTUK SCAN QR DARI HP
-=============================
+CARA UJI QR DARI HP
+-------------------
+Kalau masih localhost, HP tidak bisa membuka localhost laptop.
 
-Kalau HP konsumen scan QR dan masih pakai localhost, biasanya tidak bisa.
-Gunakan IP laptop di WiFi yang sama.
-
-Contoh:
-http://192.168.1.10:3000/order?table=1
-
-Di dashboard kasir ada kolom base URL.
-Ganti:
+Di dashboard kasir, ganti Base URL:
 http://localhost:3000
 
-menjadi:
-http://IP-LAPTOP-KAMU:3000
-
-Contoh:
+menjadi IP laptop, contoh:
 http://192.168.1.10:3000
 
-FIREBASE REALTIME
-=================
+Maka QR akan berisi:
+http://192.168.1.10:3000/order?table=1
 
-Agar pesanan dari HP konsumen benar-benar masuk realtime ke laptop kasir,
-isi konfigurasi Firebase di file:
+Pastikan HP dan laptop berada di WiFi yang sama.
 
-src/firebase.js
+MODE FIREBASE REALTIME
+----------------------
+Agar pesanan dari HP konsumen masuk realtime ke dashboard kasir:
 
-Selama konfigurasi Firebase belum diisi, aplikasi jalan dalam mode demo lokal.
-Mode demo lokal hanya cocok untuk uji coba di browser/laptop yang sama.
-
-Langkah Firebase singkat:
 1. Buka Firebase Console.
 2. Buat project baru.
 3. Tambahkan Web App.
 4. Copy firebaseConfig.
-5. Paste ke src/firebase.js.
+5. Paste ke:
+   src/firebase.js
+
 6. Buat Firestore Database.
-7. Untuk testing, gunakan rules dari file firestore.rules.txt.
-8. Jalankan npm start lagi.
+7. Untuk testing, pakai isi:
+   firestore.rules.txt
+
+8. Restart server:
+   Ctrl + C
+   npm start
+
+CATATAN
+-------
+Selama firebase.js masih berisi "ISI_...", aplikasi tetap jalan,
+tetapi hanya mode demo lokal di browser yang sama.

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { push, ref, set } from "firebase/database";
 import { db, isFirebaseConfigured } from "./firebase";
+import { addLocalOrder } from "./localStore";
 import menuItems from "./MenuData";
 
 const formatRupiah = (number) =>
@@ -8,19 +9,7 @@ const formatRupiah = (number) =>
     style: "currency",
     currency: "IDR",
     maximumFractionDigits: 0,
-  }).format(number);
-
-function saveLocalOrder(order) {
-  const current = JSON.parse(localStorage.getItem("warkop_orders") || "[]");
-  const newOrder = {
-    ...order,
-    id: `LOCAL-${Date.now()}`,
-    createdAt: new Date().toISOString(),
-  };
-  localStorage.setItem("warkop_orders", JSON.stringify([newOrder, ...current]));
-  window.dispatchEvent(new Event("storage"));
-  return newOrder;
-}
+  }).format(number || 0);
 
 export default function CustomerOrder() {
   const searchParams = new URLSearchParams(window.location.search);
@@ -34,7 +23,9 @@ export default function CustomerOrder() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successOrder, setSuccessOrder] = useState(null);
 
-  const categories = ["Semua", ...new Set(menuItems.map((item) => item.category))];
+  const categories = useMemo(() => {
+    return ["Semua", ...new Set(menuItems.map((item) => item.category))];
+  }, []);
 
   const filteredMenu = useMemo(() => {
     if (category === "Semua") return menuItems;
@@ -98,19 +89,24 @@ export default function CustomerOrder() {
       paymentStatus: "Belum Bayar",
       paymentMethod: "",
       source: "Self Order QR",
-      createdAt: isFirebaseConfigured ? serverTimestamp() : new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     };
 
     try {
       setIsSubmitting(true);
 
-      let savedOrder = null;
+      let savedOrder;
 
       if (isFirebaseConfigured && db) {
-        const docRef = await addDoc(collection(db, "orders"), orderData);
-        savedOrder = { ...orderData, id: docRef.id };
+        const newOrderRef = push(ref(db, "orders"));
+        savedOrder = {
+          ...orderData,
+          id: newOrderRef.key,
+        };
+
+        await set(newOrderRef, savedOrder);
       } else {
-        savedOrder = saveLocalOrder(orderData);
+        savedOrder = addLocalOrder(orderData);
       }
 
       setSuccessOrder(savedOrder);
@@ -119,7 +115,7 @@ export default function CustomerOrder() {
       setCustomerName("");
     } catch (error) {
       console.error(error);
-      alert("Pesanan gagal dikirim. Periksa koneksi atau konfigurasi Firebase.");
+      alert("Pesanan gagal dikirim. Periksa koneksi atau konfigurasi Realtime Database.");
     } finally {
       setIsSubmitting(false);
     }
@@ -127,17 +123,17 @@ export default function CustomerOrder() {
 
   if (successOrder) {
     return (
-      <div className="min-h-screen bg-[#111111] text-white px-4 py-8">
+      <div className="min-h-screen bg-[#111111] px-4 py-8 text-white">
         <div className="mx-auto max-w-xl rounded-3xl border border-zinc-800 bg-[#1a1a1a] p-6 shadow-2xl">
-          <div className="mb-4 rounded-2xl bg-green-500/10 p-4 text-green-300">
+          <div className="mb-5 rounded-2xl bg-green-500/10 p-4 text-green-300">
             Pesanan berhasil dikirim ke kasir.
           </div>
 
-          <h1 className="text-3xl font-bold text-[#d6a96c]">
+          <h1 className="text-3xl font-black text-[#d6a96c]">
             Warkop Agam Royal
           </h1>
           <p className="mt-2 text-zinc-400">Nomor pesanan: {successOrder.id}</p>
-          <p className="mt-1 text-zinc-400">Meja: {successOrder.tableNumber}</p>
+          <p className="text-zinc-400">Meja: {successOrder.tableNumber}</p>
 
           <div className="mt-6 space-y-3">
             {successOrder.items.map((item) => (
@@ -146,16 +142,18 @@ export default function CustomerOrder() {
                 className="flex justify-between rounded-2xl bg-[#111111] p-4"
               >
                 <div>
-                  <p className="font-semibold">{item.name}</p>
+                  <p className="font-bold">{item.name}</p>
                   <p className="text-sm text-zinc-400">{item.qty}x</p>
                 </div>
-                <p className="text-[#d6a96c]">{formatRupiah(item.subtotal)}</p>
+                <p className="font-bold text-[#d6a96c]">
+                  {formatRupiah(item.subtotal)}
+                </p>
               </div>
             ))}
           </div>
 
           <div className="mt-6 border-t border-zinc-800 pt-4">
-            <div className="flex justify-between text-xl font-bold">
+            <div className="flex justify-between text-xl font-black">
               <span>Total</span>
               <span className="text-[#d6a96c]">
                 {formatRupiah(successOrder.total)}
@@ -165,7 +163,7 @@ export default function CustomerOrder() {
 
           <button
             onClick={() => setSuccessOrder(null)}
-            className="mt-6 w-full rounded-2xl bg-[#d6a96c] py-3 font-bold text-black"
+            className="mt-6 w-full rounded-2xl bg-[#d6a96c] py-3 font-black text-black"
           >
             Pesan Lagi
           </button>
@@ -179,7 +177,7 @@ export default function CustomerOrder() {
       <header className="sticky top-0 z-20 border-b border-zinc-800 bg-[#111111]/95 px-4 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-[#d6a96c]">
+            <h1 className="text-3xl font-black text-[#d6a96c]">
               Warkop Agam Royal
             </h1>
             <p className="text-sm text-zinc-400">Self Order QR Menu</p>
@@ -204,7 +202,7 @@ export default function CustomerOrder() {
               <button
                 key={item}
                 onClick={() => setCategory(item)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                className={`rounded-full px-4 py-2 text-sm font-bold ${
                   category === item
                     ? "bg-[#d6a96c] text-black"
                     : "border border-zinc-700 bg-[#1a1a1a] text-zinc-300"
@@ -226,18 +224,20 @@ export default function CustomerOrder() {
                   alt={menu.name}
                   className="h-44 w-full object-cover"
                 />
+
                 <div className="p-5">
                   <p className="text-xs uppercase tracking-widest text-zinc-500">
                     {menu.category}
                   </p>
-                  <h2 className="mt-1 text-xl font-bold">{menu.name}</h2>
+                  <h2 className="mt-1 text-xl font-black">{menu.name}</h2>
+
                   <div className="mt-4 flex items-center justify-between">
-                    <p className="text-lg font-bold text-[#d6a96c]">
+                    <p className="text-lg font-black text-[#d6a96c]">
                       {formatRupiah(menu.price)}
                     </p>
                     <button
                       onClick={() => addToCart(menu)}
-                      className="rounded-xl bg-[#d6a96c] px-4 py-2 font-bold text-black"
+                      className="rounded-xl bg-[#d6a96c] px-4 py-2 font-black text-black"
                     >
                       Tambah
                     </button>
@@ -249,7 +249,7 @@ export default function CustomerOrder() {
         </section>
 
         <aside className="h-fit rounded-3xl border border-zinc-800 bg-[#1a1a1a] p-5 shadow-2xl lg:sticky lg:top-24">
-          <h2 className="text-2xl font-bold">Keranjang</h2>
+          <h2 className="text-2xl font-black">Keranjang</h2>
           <p className="mt-1 text-sm text-zinc-400">
             Meja {tableNumber || "-"}
           </p>
@@ -274,12 +274,12 @@ export default function CustomerOrder() {
                 >
                   <div className="flex justify-between gap-3">
                     <div>
-                      <p className="font-semibold">{item.name}</p>
+                      <p className="font-bold">{item.name}</p>
                       <p className="text-sm text-zinc-400">
                         {formatRupiah(item.price)}
                       </p>
                     </div>
-                    <p className="font-bold text-[#d6a96c]">
+                    <p className="font-black text-[#d6a96c]">
                       {formatRupiah(item.price * item.qty)}
                     </p>
                   </div>
@@ -287,14 +287,14 @@ export default function CustomerOrder() {
                   <div className="mt-3 flex items-center gap-3">
                     <button
                       onClick={() => decreaseQty(item.id)}
-                      className="h-9 w-9 rounded-lg bg-zinc-800 font-bold"
+                      className="h-9 w-9 rounded-lg bg-zinc-800 font-black"
                     >
                       -
                     </button>
-                    <span className="font-bold">{item.qty}</span>
+                    <span className="font-black">{item.qty}</span>
                     <button
                       onClick={() => addToCart(item)}
-                      className="h-9 w-9 rounded-lg bg-[#d6a96c] font-bold text-black"
+                      className="h-9 w-9 rounded-lg bg-[#d6a96c] font-black text-black"
                     >
                       +
                     </button>
@@ -320,7 +320,7 @@ export default function CustomerOrder() {
               <span>Service</span>
               <span>{formatRupiah(serviceFee)}</span>
             </div>
-            <div className="flex justify-between text-xl font-bold">
+            <div className="flex justify-between text-xl font-black">
               <span>Total</span>
               <span className="text-[#d6a96c]">{formatRupiah(total)}</span>
             </div>
@@ -329,16 +329,15 @@ export default function CustomerOrder() {
           <button
             onClick={submitOrder}
             disabled={isSubmitting}
-            className="mt-6 w-full rounded-2xl bg-[#d6a96c] py-3 text-lg font-bold text-black disabled:opacity-60"
+            className="mt-6 w-full rounded-2xl bg-[#d6a96c] py-3 text-lg font-black text-black disabled:opacity-60"
           >
             {isSubmitting ? "Mengirim..." : "Kirim Pesanan ke Kasir"}
           </button>
 
           {!isFirebaseConfigured && (
-            <p className="mt-4 rounded-2xl border border-yellow-700 bg-yellow-500/10 p-3 text-xs text-yellow-200">
-              Mode demo lokal aktif. Agar pesanan dari HP konsumen masuk ke
-              laptop kasir secara realtime, isi konfigurasi Firebase di
-              src/firebase.js.
+            <p className="mt-4 rounded-2xl border border-yellow-700 bg-yellow-500/10 p-3 text-xs text-yellow-100">
+              Mode demo lokal aktif. Agar pesanan dari HP konsumen masuk ke laptop kasir realtime,
+              isi databaseURL Realtime Database di src/firebase.js.
             </p>
           )}
         </aside>

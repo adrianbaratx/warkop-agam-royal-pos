@@ -2,7 +2,7 @@ import React from "react";
 import CustomerOrder from "./CustomerOrder";
 import KasirDashboard from "./KasirDashboard";
 
-function App() {
+export default function App() {
   const path = window.location.pathname;
 
   if (path.startsWith("/order")) {
@@ -11,5 +11,3 @@ function App() {
 
   return <KasirDashboard />;
 }
-
-export default App;

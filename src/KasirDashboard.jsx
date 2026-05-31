@@ -1,15 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import QRCode from "react-qr-code";
-import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  updateDoc,
-} from "firebase/firestore";
+import { onValue, ref, remove, update } from "firebase/database";
 import { db, isFirebaseConfigured } from "./firebase";
+import { readLocalOrders, writeLocalOrders } from "./localStore";
 
 const tableList = Array.from({ length: 30 }, (_, index) => index + 1);
 
@@ -22,22 +15,8 @@ const formatRupiah = (number) =>
 
 const formatDate = (value) => {
   if (!value) return "-";
-
-  if (value.seconds) {
-    return new Date(value.seconds * 1000).toLocaleString("id-ID");
-  }
-
   return new Date(value).toLocaleString("id-ID");
 };
-
-function readLocalOrders() {
-  return JSON.parse(localStorage.getItem("warkop_orders") || "[]");
-}
-
-function writeLocalOrders(orders) {
-  localStorage.setItem("warkop_orders", JSON.stringify(orders));
-  window.dispatchEvent(new Event("storage"));
-}
 
 export default function KasirDashboard() {
   const [orders, setOrders] = useState([]);
@@ -47,16 +26,29 @@ export default function KasirDashboard() {
 
   useEffect(() => {
     if (isFirebaseConfigured && db) {
-      const ordersQuery = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+      const ordersRef = ref(db, "orders");
 
-      const unsubscribe = onSnapshot(ordersQuery, (snapshot) => {
-        const firebaseOrders = snapshot.docs.map((item) => ({
-          id: item.id,
-          ...item.data(),
-        }));
+      const unsubscribe = onValue(
+        ordersRef,
+        (snapshot) => {
+          const value = snapshot.val() || {};
+          const realtimeOrders = Object.entries(value)
+            .map(([id, data]) => ({
+              id,
+              ...data,
+            }))
+            .sort(
+              (a, b) =>
+                new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+            );
 
-        setOrders(firebaseOrders);
-      });
+          setOrders(realtimeOrders);
+        },
+        (error) => {
+          console.error(error);
+          alert("Gagal membaca Realtime Database. Cek databaseURL dan rules.");
+        }
+      );
 
       return unsubscribe;
     }
@@ -65,40 +57,53 @@ export default function KasirDashboard() {
     refreshLocal();
 
     window.addEventListener("storage", refreshLocal);
-    return () => window.removeEventListener("storage", refreshLocal);
+    window.addEventListener("warkop-orders-updated", refreshLocal);
+
+    return () => {
+      window.removeEventListener("storage", refreshLocal);
+      window.removeEventListener("warkop-orders-updated", refreshLocal);
+    };
   }, []);
 
   const activeOrders = orders.filter(
-    (order) => order.orderStatus !== "Selesai" || order.paymentStatus !== "Sudah Bayar"
+    (order) =>
+      order.orderStatus !== "Selesai" || order.paymentStatus !== "Sudah Bayar"
   );
 
   const doneOrders = orders.filter(
-    (order) => order.orderStatus === "Selesai" && order.paymentStatus === "Sudah Bayar"
+    (order) =>
+      order.orderStatus === "Selesai" && order.paymentStatus === "Sudah Bayar"
   );
 
   const shownOrders = activeTab === "Riwayat" ? doneOrders : activeOrders;
 
   const stats = useMemo(() => {
-    const paidOrders = orders.filter((order) => order.paymentStatus === "Sudah Bayar");
+    const paidOrders = orders.filter(
+      (order) => order.paymentStatus === "Sudah Bayar"
+    );
 
     return {
       totalOrders: orders.length,
       activeOrders: activeOrders.length,
       paidOrders: paidOrders.length,
-      revenue: paidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+      revenue: paidOrders.reduce(
+        (sum, order) => sum + Number(order.total || 0),
+        0
+      ),
     };
   }, [orders, activeOrders.length]);
 
   const updateOrder = async (orderId, payload) => {
     try {
       if (isFirebaseConfigured && db) {
-        await updateDoc(doc(db, "orders", orderId), payload);
+        await update(ref(db, `orders/${orderId}`), payload);
         return;
       }
 
       const updated = readLocalOrders().map((order) =>
         order.id === orderId ? { ...order, ...payload } : order
       );
+
       writeLocalOrders(updated);
     } catch (error) {
       console.error(error);
@@ -112,11 +117,14 @@ export default function KasirDashboard() {
 
     try {
       if (isFirebaseConfigured && db) {
-        await deleteDoc(doc(db, "orders", orderId));
+        await remove(ref(db, `orders/${orderId}`));
         return;
       }
 
-      const updated = readLocalOrders().filter((order) => order.id !== orderId);
+      const updated = readLocalOrders().filter(
+        (order) => order.id !== orderId
+      );
+
       writeLocalOrders(updated);
     } catch (error) {
       console.error(error);
@@ -125,18 +133,18 @@ export default function KasirDashboard() {
   };
 
   const markPaid = async (order) => {
-    const method = paymentMethod[order.id] || "Cash";
+    const method = paymentMethod[order.id] || order.paymentMethod || "Cash";
 
     await updateOrder(order.id, {
       paymentStatus: "Sudah Bayar",
       paymentMethod: method,
       orderStatus: "Selesai",
-      paidAt: isFirebaseConfigured ? new Date() : new Date().toISOString(),
+      paidAt: new Date().toISOString(),
     });
   };
 
   const printReceipt = (order) => {
-    const rows = order.items
+    const rows = (order.items || [])
       .map(
         (item) =>
           `<tr>
@@ -146,18 +154,19 @@ export default function KasirDashboard() {
       )
       .join("");
 
-    const receiptWindow = window.open("", "_blank", "width=380,height=600");
+    const receiptWindow = window.open("", "_blank", "width=420,height=650");
 
     receiptWindow.document.write(`
       <html>
         <head>
           <title>Struk ${order.id}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 16px; }
+            body { font-family: Arial, sans-serif; padding: 16px; color: #111; }
             h2, p { margin: 4px 0; }
             table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            td { padding: 6px 0; border-bottom: 1px dashed #ccc; font-size: 14px; }
+            td { padding: 7px 0; border-bottom: 1px dashed #bbb; font-size: 14px; }
             .total { font-size: 18px; font-weight: bold; margin-top: 12px; display: flex; justify-content: space-between; }
+            .center { text-align: center; }
           </style>
         </head>
         <body>
@@ -166,8 +175,10 @@ export default function KasirDashboard() {
           <p>Customer: ${order.customerName || "-"}</p>
           <p>Waktu: ${formatDate(order.createdAt)}</p>
           <table>${rows}</table>
+          <p>Service: ${formatRupiah(order.serviceFee)}</p>
           <div class="total"><span>Total</span><span>${formatRupiah(order.total)}</span></div>
-          <p style="margin-top:16px;text-align:center">Terima kasih</p>
+          <p>Bayar: ${order.paymentMethod || "-"}</p>
+          <p class="center" style="margin-top:16px">Terima kasih</p>
           <script>window.print()</script>
         </body>
       </html>
@@ -184,7 +195,9 @@ export default function KasirDashboard() {
             <h1 className="text-3xl font-black text-[#d6a96c]">
               Warkop Agam Royal
             </h1>
-            <p className="mt-1 text-zinc-400">Dashboard Kasir & Self Order QR</p>
+            <p className="mt-1 text-zinc-400">
+              Dashboard Kasir & Self Order QR
+            </p>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-[#1a1a1a] px-5 py-3">
@@ -199,10 +212,10 @@ export default function KasirDashboard() {
       <main className="mx-auto max-w-7xl space-y-6 px-5 py-6">
         {!isFirebaseConfigured && (
           <div className="rounded-3xl border border-yellow-700 bg-yellow-500/10 p-4 text-yellow-100">
-            <strong>Mode demo lokal aktif.</strong> Untuk sistem sungguhan,
-            isi konfigurasi Firebase di <code>src/firebase.js</code>. Setelah
-            Firebase aktif, pesanan dari HP konsumen akan masuk realtime ke
-            dashboard kasir.
+            <strong>Mode demo lokal aktif.</strong> Isi{" "}
+            <code>databaseURL</code> Realtime Database di{" "}
+            <code>src/firebase.js</code> supaya pesanan dari HP masuk realtime
+            ke kasir.
           </div>
         )}
 
@@ -229,7 +242,7 @@ export default function KasirDashboard() {
           <div className="rounded-3xl border border-zinc-800 bg-[#1a1a1a] p-5">
             <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-2xl font-bold">Pesanan Masuk</h2>
+                <h2 className="text-2xl font-black">Pesanan Masuk</h2>
                 <p className="text-sm text-zinc-400">
                   Pesanan dari konsumen akan tampil di sini.
                 </p>
@@ -240,7 +253,7 @@ export default function KasirDashboard() {
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
-                    className={`rounded-xl px-4 py-2 text-sm font-bold ${
+                    className={`rounded-xl px-4 py-2 text-sm font-black ${
                       activeTab === tab
                         ? "bg-[#d6a96c] text-black"
                         : "border border-zinc-700 bg-[#111111]"
@@ -269,16 +282,17 @@ export default function KasirDashboard() {
                           <h3 className="text-2xl font-black text-[#d6a96c]">
                             Meja {order.tableNumber}
                           </h3>
-                          <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-bold text-blue-300">
+                          <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-black text-blue-300">
                             {order.orderStatus}
                           </span>
-                          <span className="rounded-full bg-yellow-500/10 px-3 py-1 text-xs font-bold text-yellow-200">
+                          <span className="rounded-full bg-yellow-500/10 px-3 py-1 text-xs font-black text-yellow-200">
                             {order.paymentStatus}
                           </span>
                         </div>
 
                         <p className="mt-2 text-sm text-zinc-400">
-                          {order.customerName || "Customer"} • {formatDate(order.createdAt)}
+                          {order.customerName || "Customer"} •{" "}
+                          {formatDate(order.createdAt)}
                         </p>
 
                         {order.note && (
@@ -294,14 +308,16 @@ export default function KasirDashboard() {
                     </div>
 
                     <div className="mt-5 space-y-2">
-                      {order.items?.map((item) => (
+                      {(order.items || []).map((item) => (
                         <div
                           key={`${order.id}-${item.id}`}
                           className="flex justify-between rounded-2xl bg-[#1a1a1a] p-3"
                         >
                           <div>
-                            <p className="font-semibold">{item.name}</p>
-                            <p className="text-sm text-zinc-400">{item.qty}x</p>
+                            <p className="font-bold">{item.name}</p>
+                            <p className="text-sm text-zinc-400">
+                              {item.qty}x
+                            </p>
                           </div>
                           <p className="text-[#d6a96c]">
                             {formatRupiah(item.subtotal)}
@@ -314,7 +330,9 @@ export default function KasirDashboard() {
                       <select
                         value={order.orderStatus}
                         onChange={(event) =>
-                          updateOrder(order.id, { orderStatus: event.target.value })
+                          updateOrder(order.id, {
+                            orderStatus: event.target.value,
+                          })
                         }
                         className="rounded-xl border border-zinc-700 bg-[#1a1a1a] px-3 py-3 outline-none"
                       >
@@ -325,7 +343,11 @@ export default function KasirDashboard() {
                       </select>
 
                       <select
-                        value={paymentMethod[order.id] || order.paymentMethod || "Cash"}
+                        value={
+                          paymentMethod[order.id] ||
+                          order.paymentMethod ||
+                          "Cash"
+                        }
                         onChange={(event) =>
                           setPaymentMethod((current) => ({
                             ...current,
@@ -344,19 +366,19 @@ export default function KasirDashboard() {
                     <div className="mt-4 flex flex-wrap gap-3">
                       <button
                         onClick={() => markPaid(order)}
-                        className="rounded-xl bg-[#d6a96c] px-4 py-3 font-bold text-black"
+                        className="rounded-xl bg-[#d6a96c] px-4 py-3 font-black text-black"
                       >
                         Bayar & Selesaikan
                       </button>
                       <button
                         onClick={() => printReceipt(order)}
-                        className="rounded-xl border border-zinc-700 bg-[#1a1a1a] px-4 py-3 font-bold"
+                        className="rounded-xl border border-zinc-700 bg-[#1a1a1a] px-4 py-3 font-black"
                       >
                         Print Struk
                       </button>
                       <button
                         onClick={() => deleteOrder(order.id)}
-                        className="rounded-xl border border-red-800 bg-red-500/10 px-4 py-3 font-bold text-red-300"
+                        className="rounded-xl border border-red-800 bg-red-500/10 px-4 py-3 font-black text-red-300"
                       >
                         Hapus
                       </button>
@@ -369,11 +391,10 @@ export default function KasirDashboard() {
 
           <aside className="space-y-6">
             <div className="rounded-3xl border border-zinc-800 bg-[#1a1a1a] p-5">
-              <h2 className="text-2xl font-bold">QR Self Order Meja</h2>
+              <h2 className="text-2xl font-black">QR Self Order Meja</h2>
               <p className="mt-2 text-sm text-zinc-400">
-                Link QR harus bisa dibuka dari HP konsumen. Untuk uji coba lewat
-                HP, ganti localhost dengan IP laptop, contoh:
-                http://192.168.1.10:3000
+                Untuk uji coba lewat HP, ganti localhost dengan IP laptop,
+                contoh: http://192.168.1.10:3000
               </p>
 
               <input
@@ -394,7 +415,7 @@ export default function KasirDashboard() {
                       <div className="rounded-xl bg-white p-3">
                         <QRCode value={value} size={128} className="mx-auto" />
                       </div>
-                      <p className="mt-3 font-bold">Meja {table}</p>
+                      <p className="mt-3 font-black">Meja {table}</p>
                       <a
                         href={value}
                         target="_blank"
